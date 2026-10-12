@@ -15,6 +15,7 @@ export default function UserDashboard({
   const [category, setCategory] = useState("All");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [checkoutMessage, setCheckoutMessage] = useState("");
+  const [checkoutError, setCheckoutError] = useState("");
   const [isCheckout, setIsCheckout] = useState(false);
   const [checkoutDetails, setCheckoutDetails] = useState({
     name: user.name === "Pet Parent" ? "" : user.name,
@@ -39,16 +40,22 @@ export default function UserDashboard({
   function handleCheckout() {
     if (!cart.length) return;
     setCheckoutMessage("");
+    setCheckoutError("");
     setIsCheckout(true);
   }
 
-  function handlePlaceOrder(event) {
+  async function handlePlaceOrder(event) {
     event.preventDefault();
     if (!cart.length) return;
     const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-    setIsCheckout(false);
-    setCheckoutMessage(`Order placed for ${itemCount} item${itemCount > 1 ? "s" : ""}. Thanks, ${checkoutDetails.name}!`);
-    onCheckout(checkoutDetails);
+    setCheckoutError("");
+    try {
+      await onCheckout(checkoutDetails);
+      setIsCheckout(false);
+      setCheckoutMessage(`Order placed for ${itemCount} item${itemCount > 1 ? "s" : ""}. Thanks, ${checkoutDetails.name}!`);
+    } catch (error) {
+      setCheckoutError(error.message);
+    }
   }
 
   function updateCheckoutField(event) {
@@ -67,6 +74,7 @@ export default function UserDashboard({
           <h1>Checkout</h1>
           <p>Where should we deliver your pet's goodies?</p>
         </div>
+        {checkoutError && <p className="form-error" role="alert">{checkoutError}</p>}
 
         <div className="checkout-layout">
           <form id="place-order" className="checkout-form" onSubmit={handlePlaceOrder}>
@@ -80,9 +88,9 @@ export default function UserDashboard({
               </div>
               <div className="checkout-fields">
                 <label htmlFor="checkout-name">Full name</label>
-                <input id="checkout-name" name="name" autoComplete="name" value={checkoutDetails.name} onChange={updateCheckoutField} placeholder="Your name" required />
+                <input id="checkout-name" name="name" autoComplete="name" value={checkoutDetails.name} readOnly required />
                 <label htmlFor="checkout-email">Email address</label>
-                <input id="checkout-email" name="email" type="email" autoComplete="email" value={checkoutDetails.email} onChange={updateCheckoutField} placeholder="you@example.com" required />
+                <input id="checkout-email" name="email" type="email" autoComplete="email" value={checkoutDetails.email} readOnly required />
                 <label htmlFor="checkout-phone">Phone number</label>
                 <input id="checkout-phone" name="phone" type="tel" autoComplete="tel" value={checkoutDetails.phone} onChange={updateCheckoutField} placeholder="+91 98765 43210" required />
               </div>

@@ -8,6 +8,21 @@ import AdminPanel from "./components/AdminPanel.jsx";
 import UserDashboard from "./components/UserDashboard.jsx";
 import { appStorageKeys, defaultProducts } from "./data.js";
 
+async function apiRequest(path, options) {
+  const response = await fetch(path, options);
+  const result = response.status === 204 ? null : await response.json();
+  if (!response.ok) throw new Error(result.error || "The database request failed.");
+  return result;
+}
+
+function jsonRequest(method, body) {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  };
+}
+
 function readStorage(key, fallback) {
   try {
     const saved = localStorage.getItem(key);
@@ -19,19 +34,30 @@ function readStorage(key, fallback) {
 
 export default function App() {
   const [loginType, setLoginType] = useState("user");
-  const [loggedInUser, setLoggedInUser] = useState(() => readStorage(appStorageKeys.user, null));
-  const [products, setProducts] = useState(() => readStorage(appStorageKeys.products, defaultProducts));
+  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [products, setProducts] = useState(defaultProducts);
   const [cart, setCart] = useState(() => readStorage(appStorageKeys.cart, []));
   const [favourites, setFavourites] = useState(() => readStorage(appStorageKeys.favourites, []));
-  const [orders, setOrders] = useState(() => readStorage(appStorageKeys.orders, []));
+  const [orders, setOrders] = useState([]);
+  const [registeredUsers, setRegisteredUsers] = useState([]);
+  const [apiError, setApiError] = useState("");
 
   useEffect(() => {
-    localStorage.setItem(appStorageKeys.user, JSON.stringify(loggedInUser));
-  }, [loggedInUser]);
-
-  useEffect(() => {
-    localStorage.setItem(appStorageKeys.products, JSON.stringify(products));
-  }, [products]);
+    Promise.all([apiRequest("/api/products"), apiRequest("/api/auth/me")])
+      .then(async ([savedProducts, session]) => {
+        setProducts(savedProducts);
+        setLoggedInUser(session.user);
+        if (session.user?.role === "Admin") {
+          const [savedOrders, savedUsers] = await Promise.all([
+            apiRequest("/api/orders"),
+            apiRequest("/api/users")
+          ]);
+          setOrders(savedOrders);
+          setRegisteredUsers(savedUsers);
+        }
+      })
+      .catch(error => setApiError(`Could not load saved shop data: ${error.message}`));
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(appStorageKeys.cart, JSON.stringify(cart));
@@ -42,13 +68,61 @@ export default function App() {
   }, [favourites]);
 
   useEffect(() => {
-    localStorage.setItem(appStorageKeys.orders, JSON.stringify(orders));
-  }, [orders]);
+    if (loggedInUser?.role !== "Admin") return undefined;
+    let isActive = true;
+    const refreshOrders = () => {
+      apiRequest("/api/orders")
+        .then(savedOrders => {
+          if (isActive) {
+            setOrders(savedOrders);
+            setApiError("");
+          }
+        })
+        .catch(error => {
+          if (isActive) setApiError(`Could not refresh orders: ${error.message}`);
+        });
+    };
+    const intervalId = window.setInterval(refreshOrders, 10000);
+    window.addEventListener("focus", refreshOrders);
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshOrders);
+    };
+  }, [loggedInUser]);
 
   function logout() {
+    apiRequest("/api/auth/logout", { method: "POST" })
+      .catch(error => setApiError(`Could not sign out: ${error.message}`));
     setLoggedInUser(null);
     setCart([]);
+    setOrders([]);
+    setRegisteredUsers([]);
     setLoginType("user");
+  }
+
+  async function authenticate(credentials, isRegistration = false, isAdminLogin = false) {
+    const result = await apiRequest(
+      isRegistration
+        ? "/api/auth/register"
+        : isAdminLogin ? "/api/auth/admin-login" : "/api/auth/login",
+      jsonRequest("POST", credentials)
+    );
+    if (result.user.role === "Admin") {
+      const [savedOrders, savedUsers] = await Promise.all([
+        apiRequest("/api/orders"),
+        apiRequest("/api/users")
+      ]);
+      setOrders(savedOrders);
+      setRegisteredUsers(savedUsers);
+    } else {
+      setOrders([]);
+      setRegisteredUsers([]);
+    }
+    setCart([]);
+    setFavourites([]);
+    setLoggedInUser(result.user);
+    setApiError("");
   }
 
   function addToCart(product, quantity = 1) {
@@ -73,50 +147,67 @@ export default function App() {
     setFavourites(current => current.includes(productId) ? current.filter(id => id !== productId) : [...current, productId]);
   }
 
-  function updateProduct(productId, updates) {
-    setProducts(current => current.map(product => product.id === productId ? { ...product, ...updates } : product));
+  async function updateProduct(productId, updates) {
+    try {
+      const updatedProduct = await apiRequest(`/api/products/${productId}`, jsonRequest("PATCH", updates));
+      setProducts(current => current.map(product => product.id === productId ? updatedProduct : product));
+      setApiError("");
+    } catch (error) {
+      setApiError(`Could not update product: ${error.message}`);
+      throw error;
+    }
   }
 
-  function addProduct(newProduct) {
-    setProducts(current => [
-      {
-        id: Date.now(),
-        ...newProduct,
-        price: Number(newProduct.price),
-        stock: Number(newProduct.stock)
-      },
-      ...current
-    ]);
+  async function addProduct(newProduct) {
+    try {
+      const savedProduct = await apiRequest("/api/products", jsonRequest("POST", newProduct));
+      setProducts(current => [savedProduct, ...current]);
+      setApiError("");
+    } catch (error) {
+      setApiError(`Could not add product: ${error.message}`);
+      throw error;
+    }
   }
 
-  function checkoutCart(contactDetails) {
-    const orderItems = cart.map(item => ({ ...item }));
-    const total = orderItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
-    const order = {
-      id: `PH-${Date.now().toString(36).toUpperCase()}`,
-      customer: {
-        name: contactDetails.name,
-        email: contactDetails.email,
-        phone: contactDetails.phone
-      },
-      address: {
-        street: contactDetails.address,
-        city: contactDetails.city,
-        state: contactDetails.state,
-        postalCode: contactDetails.postalCode
-      },
-      items: orderItems,
-      total,
-      status: "Placed",
-      createdAt: new Date().toISOString()
-    };
-    setOrders(current => [order, ...current]);
-    setCart([]);
+  async function checkoutCart(contactDetails) {
+    try {
+      const { order, products: savedProducts } = await apiRequest("/api/orders", jsonRequest("POST", {
+        customer: {
+          name: contactDetails.name,
+          email: contactDetails.email,
+          phone: contactDetails.phone
+        },
+        address: {
+          street: contactDetails.address,
+          city: contactDetails.city,
+          state: contactDetails.state,
+          postalCode: contactDetails.postalCode
+        },
+        items: cart.map(item => ({ id: item.id, quantity: item.quantity }))
+      }));
+      setOrders(current => [order, ...current]);
+      setProducts(savedProducts);
+      setCart([]);
+      setApiError("");
+    } catch (error) {
+      setApiError(`Could not place your order: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async function dispatchOrder(orderId) {
+    const dispatchedOrder = await apiRequest(
+      `/api/orders/${encodeURIComponent(orderId)}/dispatch`,
+      { method: "PATCH" }
+    );
+    setOrders(current => current.map(order => order.id === orderId ? dispatchedOrder : order));
+    return dispatchedOrder;
   }
 
   return (
     <div className="app-shell">
       <Header user={loggedInUser} onLogout={logout} onHome={() => !loggedInUser && setLoginType("user")} />
+      {apiError && <p className="api-error" role="alert">{apiError}</p>}
       {!loggedInUser ? (
         <>
           <main className="login-layout">
@@ -133,13 +224,15 @@ export default function App() {
                 <button role="tab" aria-selected={loginType === "user"} className={loginType === "user" ? "switch-option active" : "switch-option"} onClick={() => setLoginType("user")}><UserRound size={16} /> User login</button>
                 <button role="tab" aria-selected={loginType === "admin"} className={loginType === "admin" ? "switch-option active" : "switch-option"} onClick={() => setLoginType("admin")}><ShieldCheck size={16} /> Admin login</button>
               </div>
-              {loginType === "admin" ? <AdminLogin onLogin={setLoggedInUser} onSwitch={() => setLoginType("user")} /> : <UserLogin onLogin={setLoggedInUser} onSwitch={() => setLoginType("admin")} />}
+              {loginType === "admin"
+                ? <AdminLogin onLogin={(credentials) => authenticate(credentials, false, true)} onSwitch={() => setLoginType("user")} />
+                : <UserLogin onLogin={authenticate} onSwitch={() => setLoginType("admin")} />}
             </section>
           </main>
           <div className="login-bottom-note">A little more care, in every corner of their world.</div>
         </>
       ) : loggedInUser.role === "Admin" ? (
-        <AdminPanel products={products} orders={orders} onUpdateProduct={updateProduct} onAddProduct={addProduct} />
+        <AdminPanel products={products} orders={orders} registeredUsers={registeredUsers} onUpdateProduct={updateProduct} onAddProduct={addProduct} onDispatchOrder={dispatchOrder} />
       ) : (
         <UserDashboard
           user={loggedInUser}

@@ -73,21 +73,7 @@ export const defaultProducts = [
   }
 ];
 
-export const users = [
-  { id: 1, name: "Aarav Shah", email: "aarav@example.com", role: "Customer", status: "Active" },
-  { id: 2, name: "Mira Patel", email: "mira@example.com", role: "Customer", status: "Active" },
-  { id: 3, name: "Kabir Rao", email: "kabir@example.com", role: "Customer", status: "Active" }
-];
-
-export const demoCredentials = {
-  admin: { email: "admin@pethaven.com", password: "admin123" },
-  user: { email: "user@pethaven.com", password: "user123" }
-};
-
 export const appStorageKeys = {
-  products: "pet-haven-products",
   cart: "pet-haven-cart",
-  user: "pet-haven-user",
-  favourites: "pet-haven-favourites",
-  orders: "pet-haven-orders"
+  favourites: "pet-haven-favourites"
 };

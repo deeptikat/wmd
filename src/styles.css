@@ -778,6 +778,16 @@ tbody td {
   font-size: 12px;
   font-weight: 700;
 }
+.api-error {
+  max-width: 1120px;
+  margin: 16px auto;
+  padding: 12px 14px;
+  border: 1px solid #f0d2cc;
+  border-radius: 10px;
+  background: #fff0ed;
+  color: #b43b30;
+  font-size: 12px;
+}
 .cart-panel {
   background: #fffefb;
   border: 1px solid #e9ebdf;

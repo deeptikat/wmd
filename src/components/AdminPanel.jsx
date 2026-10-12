@@ -1,38 +1,62 @@
 import React, { useState } from "react";
-import { Package, Users, IndianRupee, Boxes, ShieldCheck, PlusCircle, Sparkles } from "lucide-react";
-import { users } from "../data";
+import { Package, Users, IndianRupee, Boxes, ShieldCheck, PlusCircle, Sparkles, Truck } from "lucide-react";
 
-export default function AdminPanel({ products, orders, onUpdateProduct, onAddProduct }) {
+export default function AdminPanel({ products, orders, registeredUsers, onUpdateProduct, onAddProduct, onDispatchOrder }) {
   const [draft, setDraft] = useState({ name: "", category: "Food", price: "", stock: "" });
   const [notice, setNotice] = useState("");
+  const [orderNotice, setOrderNotice] = useState("");
+  const [dispatchingOrderId, setDispatchingOrderId] = useState(null);
+  const currentOrders = orders.filter(order => order.status === "Placed");
+  const orderHistory = orders.filter(order => order.status === "Dispatched");
+  const historyTotal = orderHistory.reduce((sum, order) => sum + order.total, 0);
 
   const totalStock = products.reduce((sum, product) => sum + product.stock, 0);
   const inventoryValue = products.reduce((sum, product) => sum + product.price * product.stock, 0);
   const lowStockCount = products.filter(product => product.stock < 15).length;
 
-  function handleStockChange(productId, value) {
+  async function handleStockChange(productId, value) {
     const nextStock = Math.max(0, Number(value) || 0);
-    onUpdateProduct(productId, { stock: nextStock });
+    try {
+      await onUpdateProduct(productId, { stock: nextStock });
+      setNotice("");
+    } catch (error) {
+      setNotice(`Could not update stock: ${error.message}`);
+    }
   }
 
-  function handleAddProduct(event) {
+  async function handleDispatch(order) {
+    setDispatchingOrderId(order.id);
+    try {
+      await onDispatchOrder(order.id);
+      setOrderNotice(`Order ${order.id} dispatched.`);
+    } catch (error) {
+      setOrderNotice(`Could not dispatch order: ${error.message}`);
+    } finally {
+      setDispatchingOrderId(null);
+    }
+  }
+
+  async function handleAddProduct(event) {
     event.preventDefault();
     if (!draft.name.trim() || !draft.price || !draft.stock) {
       setNotice("Please fill in the product name, price, and stock level.");
       return;
     }
 
-    onAddProduct({
-      name: draft.name.trim(),
-      category: draft.category,
-      price: Number(draft.price),
-      stock: Number(draft.stock),
-      description: "Freshly added to the Pet Haven range.",
-      image: "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=900&q=85"
-    });
-
-    setDraft({ name: "", category: "Food", price: "", stock: "" });
-    setNotice(`${draft.name.trim()} added successfully.`);
+    try {
+      await onAddProduct({
+        name: draft.name.trim(),
+        category: draft.category,
+        price: Number(draft.price),
+        stock: Number(draft.stock),
+        description: "Freshly added to the Pet Haven range.",
+        image: "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=900&q=85"
+      });
+      setDraft({ name: "", category: "Food", price: "", stock: "" });
+      setNotice(`${draft.name.trim()} added successfully.`);
+    } catch (error) {
+      setNotice(`Could not add product: ${error.message}`);
+    }
   }
 
   return (
@@ -48,7 +72,7 @@ export default function AdminPanel({ products, orders, onUpdateProduct, onAddPro
 
       <section className="stat-grid">
         <article className="stat-card"><span className="stat-icon lilac"><Package /></span><span className="stat-label">Products</span><strong>{products.length}</strong><small>Listed in catalogue</small></article>
-        <article className="stat-card"><span className="stat-icon peach"><Users /></span><span className="stat-label">Users</span><strong>{users.length}</strong><small>Sample customer records</small></article>
+        <article className="stat-card"><span className="stat-icon peach"><Users /></span><span className="stat-label">Registered users</span><strong>{registeredUsers.filter(user => user.role === "User").length}</strong><small>Customer accounts</small></article>
         <article className="stat-card"><span className="stat-icon mint"><Boxes /></span><span className="stat-label">Units in stock</span><strong>{totalStock}</strong><small>Across all products</small></article>
         <article className="stat-card"><span className="stat-icon yellow"><IndianRupee /></span><span className="stat-label">Stock value</span><strong>₹{inventoryValue.toLocaleString("en-IN")}</strong><small>Estimated retail value</small></article>
       </section>
@@ -144,13 +168,13 @@ export default function AdminPanel({ products, orders, onUpdateProduct, onAddPro
       <section className="panel orders-panel">
         <div className="panel-heading">
           <div>
-            <h2>Customer orders</h2>
-            <p>Orders submitted at checkout, with delivery and contact details.</p>
+            <h2>Current orders</h2>
+            <p>Orders waiting to be dispatched.</p>
           </div>
-          <span className="table-count">{orders.length} {orders.length === 1 ? "order" : "orders"}</span>
+          <span className="table-count">{currentOrders.length} {currentOrders.length === 1 ? "order" : "orders"}</span>
         </div>
-        {orders.length === 0 ? (
-          <div className="orders-empty">No orders yet. Orders placed by customers will appear here.</div>
+        {currentOrders.length === 0 ? (
+          <div className="orders-empty">No current orders. New customer orders will appear here.</div>
         ) : (
           <div className="table-scroll">
             <table>
@@ -164,10 +188,11 @@ export default function AdminPanel({ products, orders, onUpdateProduct, onAddPro
                   <th>Placed</th>
                   <th>Total</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.map(order => (
+                {currentOrders.map(order => (
                   <tr key={order.id}>
                     <td><strong>{order.id}</strong></td>
                     <td>{order.customer.name}</td>
@@ -186,6 +211,55 @@ export default function AdminPanel({ products, orders, onUpdateProduct, onAddPro
                     <td>{new Date(order.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</td>
                     <td><strong>₹{order.total.toLocaleString("en-IN")}</strong></td>
                     <td><span className="status active">{order.status}</span></td>
+                    <td>
+                      <button
+                        className="outline-button"
+                        type="button"
+                        onClick={() => handleDispatch(order)}
+                        disabled={dispatchingOrderId === order.id}
+                      >
+                        <Truck size={15} /> {dispatchingOrderId === order.id ? "Dispatching..." : "Mark dispatched"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {orderNotice && <div className="admin-notice" role="status">{orderNotice}</div>}
+      </section>
+
+      <section className="panel orders-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Order history</h2>
+            <p>Dispatched orders remain here for the store's records.</p>
+          </div>
+          <span className="table-count">{orderHistory.length} dispatched</span>
+        </div>
+        <div className="stat-grid order-history-summary">
+          <article className="stat-card"><span className="stat-icon lilac"><Package /></span><span className="stat-label">Orders dispatched</span><strong>{orderHistory.length}</strong><small>Completed dispatches</small></article>
+          <article className="stat-card"><span className="stat-icon yellow"><IndianRupee /></span><span className="stat-label">Dispatched order value</span><strong>₹{historyTotal.toLocaleString("en-IN")}</strong><small>Total order value</small></article>
+        </div>
+        {orderHistory.length === 0 ? (
+          <div className="orders-empty">Dispatched orders will appear here.</div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Order</th><th>Customer</th><th>Items</th><th>Placed</th><th>Dispatched</th><th>Total</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {orderHistory.map(order => (
+                  <tr key={order.id}>
+                    <td><strong>{order.id}</strong></td>
+                    <td>{order.customer.name}<br /><small>{order.customer.email}</small></td>
+                    <td className="order-items-cell">{order.items.map(item => <span key={item.id}>{item.name} × {item.quantity}</span>)}</td>
+                    <td>{new Date(order.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</td>
+                    <td>{order.dispatchedAt ? new Date(order.dispatchedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
+                    <td><strong>₹{order.total.toLocaleString("en-IN")}</strong></td>
+                    <td><span className="status active">{order.status}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -193,11 +267,10 @@ export default function AdminPanel({ products, orders, onUpdateProduct, onAddPro
           </div>
         )}
       </section>
-
       <section className="panel">
-        <div className="panel-heading"><div><h2>Registered users</h2><p>Example user records displayed through a React component.</p></div><span className="table-count">{users.length} users</span></div>
+        <div className="panel-heading"><div><h2>Registered users</h2><p>Customer accounts stored in the database.</p></div><span className="table-count">{registeredUsers.filter(user => user.role === "User").length} users</span></div>
         <div className="table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>
-          {users.map(user => <tr key={user.id}><td><strong>{user.name}</strong></td><td>{user.email}</td><td>{user.role}</td><td><span className="status active">{user.status}</span></td></tr>)}
+          {registeredUsers.filter(user => user.role === "User").map(user => <tr key={user.id}><td><strong>{user.name}</strong></td><td>{user.email}</td><td>{user.role}</td><td><span className="status active">Active</span></td></tr>)}
         </tbody></table></div>
       </section>
     </main>
